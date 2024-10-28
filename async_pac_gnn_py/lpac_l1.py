@@ -5,6 +5,7 @@ import rclpy
 import torch
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Int32
 from geometry_msgs.msg import PoseArray
 from geometry_msgs.msg import TwistStamped
 
@@ -87,14 +88,29 @@ class LPAC(Node):
         self.world_idf = WorldIDF(self.parameters, self.idf_file)
         self.cc_env = None
 
-        self.subscription = self.create_subscription(
+        self.status_pac = 2
+        self.pac_status_subscription = self.create_subscription(
+                Int32,
+                '/pac_gcs/status_pac',
+                self.pac_status_callback,
+                10)
+
+        while self.status_pac:
+            self.get_logger().info(f'Waiting for status_pac to be ready. Current status: {self.status_pac}')
+            rclpy.spin_once(self)
+
+        # Log status_pac
+        self.get_logger().info(f'status_pac: {self.status_pac}')
+        self.robot_poses = PointVector()
+        for i in range(self.parameters.pNumRobots):
+            self.robot_poses.append(Point2(0, 0))
+
+        self.poses_subscription = self.create_subscription(
                 PoseArray,
                 'robot_poses',
                 self.poses_callback,
                 10)
-        self.robot_poses = PointVector()
-        for i in range(self.parameters.pNumRobots):
-            self.robot_poses.append(Point2(0, 0))
+
         while self.robot_poses[0][0] == 0 and self.robot_poses[0][1] == 0:
             self.get_logger().info('Waiting for robot poses')
             rclpy.spin_once(self)
@@ -147,6 +163,9 @@ class LPAC(Node):
             self.robot_controller_params, self.parameters, self.cc_env
         )
 
+    def pac_status_callback(self, msg):
+        self.status_pac = msg.data
+
     def poses_callback(self, msg):
         for i in range(self.parameters.pNumRobots):
             self.robot_poses[i][0] = msg.poses[i].position.x
@@ -155,9 +174,14 @@ class LPAC(Node):
                 self.cc_env.SetGlobalRobotPosition(i, self.robot_poses[i])
 
     def lpac_step_callback(self):
+        if self.status_pac == 2:
+            return
         if self.cc_env is not None:
             actions = self.controller.step(self.cc_env)
             self_action = actions[self.robot_index]
+            if self.status_pac == 1:
+                self_action[0] = 0
+                self_action[1] = 0
             twist_msg = TwistStamped()
             t = self.get_clock().now()
             twist_msg.header.stamp = t.to_msg()
