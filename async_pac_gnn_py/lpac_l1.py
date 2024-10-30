@@ -8,7 +8,7 @@ from std_msgs.msg import Float32MultiArray
 from std_msgs.msg import Int32
 from geometry_msgs.msg import PoseArray
 from geometry_msgs.msg import TwistStamped
-from async_pac_gnn_interfaces.srv import NamespacesRobots
+from async_pac_gnn_interfaces.srv import WorldMap
 from rcl_interfaces.srv import GetParameters
 
 from coverage_control import Point2
@@ -72,9 +72,13 @@ class LPAC(Node):
         # self.namespaces_of_robots = self.get_parameter('namespaces_of_robots').get_parameter_value().string_array_value
 
         # self.namespaces_of_robots_client = self.create_client(NamespacesRobots, '/sim/namespaces_robots')
-        self.sim_parameters_client = self.create_client(GetParameters, '/sim/sim_centralized/get_parameters')
-        while not self.sim_parameters_client.wait_for_service(timeout_sec=10.0):
-            self.get_logger().info('/sim/sim_centralizes/get_parameters service not available, waiting again...')
+        self.sim_parameters_client = self.create_client(GetParameters, 'sim_get_parameters')
+        while not self.sim_parameters_client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().info('sim parameters service not available, waiting again...')
+
+        if not self.sim_parameters_client.service_is_ready():
+            self.get_logger().error('Service not available')
+            return
 
         request = GetParameters.Request()
         request.names = ['namespaces_of_robots', 'env_scale_factor', 'vel_scale_factor']
@@ -97,13 +101,7 @@ class LPAC(Node):
 
         self.declare_parameter('params_file', '')
         self.params_file = self.get_parameter('params_file').get_parameter_value().string_value
-        self.parameters = Parameters(self.params_file)
-
-        self.declare_parameter('idf_file', '')
-        self.idf_file = self.get_parameter('idf_file').get_parameter_value().string_value
-
-        self.parameters.pNumRobots = len(self.namespaces_of_robots)
-        self.world_idf = WorldIDF(self.parameters, self.idf_file)
+        self.cc_parameters = Parameters(self.params_file)
         self.cc_env = None
 
         self.status_pac = 2
@@ -120,7 +118,7 @@ class LPAC(Node):
         # Log status_pac
         self.get_logger().info(f'status_pac: {self.status_pac}')
         self.robot_poses = PointVector()
-        for i in range(self.parameters.pNumRobots):
+        for i in range(len(self.namespaces_of_robots)):
             self.robot_poses.append(Point2(0, 0))
 
         self.poses_subscription = self.create_subscription(
@@ -133,7 +131,33 @@ class LPAC(Node):
             self.get_logger().info('Waiting for robot poses')
             rclpy.spin_once(self)
 
-        self.cc_env = CoverageSystem(self.parameters, self.world_idf, self.robot_poses)
+        self.get_logger().info('Robot poses received')
+
+        # Get world map from service call to /sim/sim_centralized/get_world_map
+        self.sim_world_map_client = self.create_client(WorldMap, 'get_world_map')
+        while not self.sim_world_map_client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().info('sim get_world_map service not available, waiting again...')
+        if not self.sim_world_map_client.service_is_ready():
+            self.get_logger().error('Service not available')
+            return
+
+        request = WorldMap.Request()
+        request.map_size = self.cc_parameters.pWorldMapSize
+        future = self.sim_world_map_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+        if future.result() is not None and future.result().success:
+            sim_map = future.result().map
+            self.get_logger().info('Received world map')
+        else:
+            self.get_logger().error('Service call failed')
+
+        np_map = self.float32_multiarray_to_numpy(sim_map)
+        self.cc_parameters.pNumRobots = len(self.namespaces_of_robots)
+        self.world_idf = WorldIDF(self.cc_parameters, np_map)
+        self.cc_env = CoverageSystem(self.cc_parameters, self.world_idf, self.robot_poses)
+        # self.world_map = self.cc_env.GetWorldMapMutable()
+        # self.world_map[:, :] = np_map
+
         cmd_vel_topic = 'cmd_vel'
         self.ns = self.get_namespace()
         # Remove the leading '/'
@@ -152,7 +176,7 @@ class LPAC(Node):
 
         self.publisher_cmd_vel = self.create_publisher(TwistStamped, f'{cmd_vel_topic}', 10)
 
-        timer_period = self.parameters.pTimeStep
+        timer_period = self.cc_parameters.pTimeStep
         self.lpac_step_timer = self.create_timer(timer_period, self.lpac_step_callback)
 
         self.robot_controller_params = {}
@@ -178,14 +202,24 @@ class LPAC(Node):
 
 
         self.controller = LPAC_Controller(
-                self.robot_controller_params, self.parameters, self.cc_env
+                self.robot_controller_params, self.cc_parameters, self.cc_env
                 )
 
     def pac_status_callback(self, msg):
         self.status_pac = msg.data
 
+    def float32_multiarray_to_numpy(self, msg: Float32MultiArray) -> np.ndarray:
+        # Get the row and column sizes from the layout dimensions
+        rows = msg.layout.dim[0].size
+        cols = msg.layout.dim[1].size
+
+        # Map the flat data into a NumPy array with the specified shape (row-major by default)
+        matrix = np.array(msg.data, dtype=np.float32).reshape((rows, cols))
+
+        return matrix
+
     def poses_callback(self, msg):
-        for i in range(self.parameters.pNumRobots):
+        for i in range(self.cc_parameters.pNumRobots):
             self.robot_poses[i][0] = msg.poses[i].position.x
             self.robot_poses[i][1] = msg.poses[i].position.y
             if self.cc_env is not None:
