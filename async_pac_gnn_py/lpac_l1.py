@@ -8,8 +8,9 @@ from std_msgs.msg import Float32MultiArray
 from std_msgs.msg import Int32
 from geometry_msgs.msg import PoseArray
 from geometry_msgs.msg import TwistStamped
+from async_pac_gnn_interfaces.srv import NamespacesRobots
+from rcl_interfaces.srv import GetParameters
 
-import coverage_control as cc
 from coverage_control import Point2
 from coverage_control import PointVector
 from coverage_control import Parameters
@@ -56,10 +57,10 @@ class LPAC_Controller:
                 ).to(self.device)
         with torch.no_grad():
             actions = self.model(pyg_data)
-        actions = actions * self.actions_std + self.actions_mean
+            actions = actions * self.actions_std + self.actions_mean
         point_vector_actions = PointVector(actions.cpu().numpy())
         return point_vector_actions
-        # env.StepActions(point_vector_actions)
+    # env.StepActions(point_vector_actions)
 
         # return env.GetObjectiveValue(), False
 
@@ -67,15 +68,32 @@ class LPAC(Node):
     def __init__(self):
         super().__init__('lpac_coveragecontrol')
 
-        self.declare_parameter('namespaces_of_robots', rclpy.Parameter.Type.STRING_ARRAY)
-        self.namespaces_of_robots = self.get_parameter('namespaces_of_robots').get_parameter_value().string_array_value
+        # self.declare_parameter('namespaces_of_robots', rclpy.Parameter.Type.STRING_ARRAY)
+        # self.namespaces_of_robots = self.get_parameter('namespaces_of_robots').get_parameter_value().string_array_value
+
+        # self.namespaces_of_robots_client = self.create_client(NamespacesRobots, '/sim/namespaces_robots')
+        self.sim_parameters_client = self.create_client(GetParameters, '/sim/sim_centralized/get_parameters')
+        while not self.sim_parameters_client.wait_for_service(timeout_sec=10.0):
+            self.get_logger().info('/sim/sim_centralizes/get_parameters service not available, waiting again...')
+
+        request = GetParameters.Request()
+        request.names = ['namespaces_of_robots', 'env_scale_factor', 'vel_scale_factor']
+        future = self.sim_parameters_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+        if future.result() is not None:
+            self.namespaces_of_robots = future.result().values[0].string_array_value
+            self.env_scale_factor = future.result().values[1].double_value
+            self.vel_scale_factor = future.result().values[2].double_value
+        else:
+            self.get_logger().error('Service call failed')
+        self.get_logger().info(f'Namespaces of robots: {self.namespaces_of_robots}')
 
         self.declare_parameter('buffer_size', 10)
         self.buffer_size = self.get_parameter('buffer_size').get_parameter_value().integer_value
 
-        self.declare_parameter('scale_factor', 1.0)
-        self.scale_factor = self.get_parameter('scale_factor').get_parameter_value().double_value
-        self.get_logger().info(f'Scale factor: {self.scale_factor}')
+        # self.declare_parameter('vel_scale_factor', 1.0)
+        # self.vel_scale_factor = self.get_parameter('vel_scale_factor').get_parameter_value().double_value
+        self.get_logger().info(f'Velocity Scale factor: {self.vel_scale_factor}')
 
         self.declare_parameter('params_file', '')
         self.params_file = self.get_parameter('params_file').get_parameter_value().string_value
@@ -158,10 +176,10 @@ class LPAC(Node):
         else:
             self.get_logger().error('LearningParams file does not exist or is not provided')
 
-        
+
         self.controller = LPAC_Controller(
-            self.robot_controller_params, self.parameters, self.cc_env
-        )
+                self.robot_controller_params, self.parameters, self.cc_env
+                )
 
     def pac_status_callback(self, msg):
         self.status_pac = msg.data
@@ -186,8 +204,8 @@ class LPAC(Node):
             t = self.get_clock().now()
             twist_msg.header.stamp = t.to_msg()
             twist_msg.header.frame_id = self.ns
-            twist_msg.twist.linear.x = self_action[0] * self.scale_factor
-            twist_msg.twist.linear.y = self_action[1] * self.scale_factor
+            twist_msg.twist.linear.x = self_action[0] * self.vel_scale_factor
+            twist_msg.twist.linear.y = self_action[1] * self.vel_scale_factor
             twist_msg.twist.linear.z = 0.0
             twist_msg.twist.angular.x = 0.0
             twist_msg.twist.angular.y = 0.0
