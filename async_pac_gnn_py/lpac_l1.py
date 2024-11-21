@@ -72,7 +72,7 @@ class LPAC(Node):
         # self.namespaces_of_robots = self.get_parameter('namespaces_of_robots').get_parameter_value().string_array_value
 
         # self.namespaces_of_robots_client = self.create_client(NamespacesRobots, '/sim/namespaces_robots')
-        self.sim_parameters_client = self.create_client(GetParameters, '/sim/sim_centralized/get_parameters')
+        self.sim_parameters_client = self.create_client(GetParameters, 'sim_get_parameters')
         while not self.sim_parameters_client.wait_for_service(timeout_sec=2.0):
             self.get_logger().info('sim parameters service not available, waiting again...')
 
@@ -134,7 +134,7 @@ class LPAC(Node):
         self.get_logger().info('Robot poses received')
 
         # Get world map from service call to /sim/sim_centralized/get_world_map
-        self.sim_world_map_client = self.create_client(WorldMap, '/sim/get_world_map')
+        self.sim_world_map_client = self.create_client(WorldMap, 'get_world_map')
         while not self.sim_world_map_client.wait_for_service(timeout_sec=2.0):
             self.get_logger().info('sim get_world_map service not available, waiting again...')
         if not self.sim_world_map_client.service_is_ready():
