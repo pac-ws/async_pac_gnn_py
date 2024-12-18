@@ -60,9 +60,6 @@ class LPAC_Controller:
             actions = actions * self.actions_std + self.actions_mean
         point_vector_actions = PointVector(actions.cpu().numpy())
         return point_vector_actions
-    # env.StepActions(point_vector_actions)
-
-        # return env.GetObjectiveValue(), False
 
 class LPAC(Node):
     def __init__(self):
