@@ -212,9 +212,10 @@ class LPAC(Node):
             return
         if self.cc_env is not None:
             actions = self.controller.step(self.cc_env)
-            if self.status_pac == 1:
-                actions = actions * 0
             for i in range(self.cc_parameters.pNumRobots):
+                if self.status_pac == 1:
+                    actions[i][0] = 0
+                    actions[i][1] = 0
                 twist_msg = TwistStamped()
                 t = self.get_clock().now()
                 twist_msg.header.stamp = t.to_msg()
@@ -226,7 +227,6 @@ class LPAC(Node):
                 twist_msg.twist.angular.y = 0.0
                 twist_msg.twist.angular.z = 0.0
                 self.publishers_cmd_vel[i].publish(twist_msg)
-
 
 def main(args=None):
     rclpy.init(args=args)
