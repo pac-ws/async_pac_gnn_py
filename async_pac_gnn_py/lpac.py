@@ -124,9 +124,9 @@ class LPAC(Node):
                 self.poses_callback,
                 10)
 
-        while self.robot_poses[0][0] == 0 and self.robot_poses[0][1] == 0:
-            self.get_logger().info('Waiting for robot poses')
-            rclpy.spin_once(self)
+        # while self.robot_poses[0][0] == 0 and self.robot_poses[0][1] == 0:
+        #     self.get_logger().info('Waiting for robot poses')
+        #     rclpy.spin_once(self)
 
         self.get_logger().info('Robot poses received')
 
@@ -208,7 +208,7 @@ class LPAC(Node):
                 self.cc_env.SetGlobalRobotPosition(i, self.robot_poses[i])
 
     def lpac_step_callback(self):
-        if self.status_pac == 2:
+        if self.status_pac != 0 and self.status_pac != 1:
             return
         if self.cc_env is not None:
             actions = self.controller.step(self.cc_env)
