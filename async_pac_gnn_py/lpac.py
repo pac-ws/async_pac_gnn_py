@@ -64,7 +64,12 @@ class LPAC_Controller:
 class LPAC(Node):
     def __init__(self):
         super().__init__('lpac_coveragecontrol')
-
+        self.qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=5
+        )
         # self.declare_parameter('namespaces_of_robots', rclpy.Parameter.Type.STRING_ARRAY)
         # self.namespaces_of_robots = self.get_parameter('namespaces_of_robots').get_parameter_value().string_array_value
 
@@ -106,7 +111,7 @@ class LPAC(Node):
                 Int32,
                 '/pac_gcs/status_pac',
                 self.pac_status_callback,
-                10)
+                qos_profile=self.qos_profile)
 
         while self.status_pac:
             self.get_logger().info(f'Waiting for status_pac to be ready. Current status: {self.status_pac}')
@@ -122,7 +127,7 @@ class LPAC(Node):
                 PoseArray,
                 'robot_poses',
                 self.poses_callback,
-                10)
+                qos_profile=self.qos_profile)
 
         # while self.robot_poses[0][0] == 0 and self.robot_poses[0][1] == 0:
         #     self.get_logger().info('Waiting for robot poses')
@@ -156,7 +161,7 @@ class LPAC(Node):
         # self.world_map[:, :] = np_map
 
         cmd_vel_topic = 'cmd_vel'
-        self.publishers_cmd_vel = [self.create_publisher(TwistStamped, f'/{ns}/{cmd_vel_topic}', 10) for ns in self.namespaces_of_robots]
+        self.publishers_cmd_vel = [self.create_publisher(TwistStamped, f'/{ns}/{cmd_vel_topic}', self.qos_profile) for ns in self.namespaces_of_robots]
 
         timer_period = self.cc_parameters.pTimeStep
         self.lpac_step_timer = self.create_timer(timer_period, self.lpac_step_callback)
