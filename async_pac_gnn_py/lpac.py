@@ -115,8 +115,9 @@ class LPAC(Node):
                 qos_profile=self.qos_profile)
 
         while self.status_pac:
-            self.get_logger().info(f'Waiting for status_pac to be ready. Current status: {self.status_pac}')
+            self.get_logger().warn(f'Waiting for status_pac to be ready. Current status: {self.status_pac}', once=True)
             rclpy.spin_once(self)
+        self.get_logger().info('status_pac is ready')
 
         # Log status_pac
         self.get_logger().info(f'status_pac: {self.status_pac}')
