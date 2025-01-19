@@ -10,6 +10,7 @@ from geometry_msgs.msg import PoseArray
 from geometry_msgs.msg import TwistStamped
 from async_pac_gnn_interfaces.srv import WorldMap
 from rcl_interfaces.srv import GetParameters
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from coverage_control import Point2
 from coverage_control import PointVector
