@@ -16,6 +16,7 @@ from rclpy.wait_for_message import wait_for_message
 from rclpy.executors import Executor
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.executors import ShutdownException
+from rclpy.executors import ExternalShutdownException
 from rclpy.executors import SingleThreadedExecutor
 
 from coverage_control import Point2
@@ -82,7 +83,14 @@ class LPAC(Node):
 
         # self.namespaces_of_robots_client = self.create_client(NamespacesRobots, '/sim/namespaces_robots')
         self.sim_parameters_client = self.create_client(GetParameters, 'sim_get_parameters')
-        while not self.sim_parameters_client.wait_for_service(timeout_sec=2.0):
+        while True:
+            try:
+                service_flag = self.sim_parameters_client.wait_for_service(timeout_sec=2.0)
+            except Exception as e:
+                self.get_logger().error(f'Error: {e}')
+                raise SystemExit
+            if service_flag:
+                break
             self.get_logger().info('sim parameters service not available, waiting again...')
 
         if not self.sim_parameters_client.service_is_ready():
@@ -118,8 +126,9 @@ class LPAC(Node):
         while True:
             try:
                 is_success, msg = wait_for_message(Int32, self, self.status_topic, qos_profile=self.qos_profile)
-            except:
-                return
+            except Exception as e:
+                self.get_logger().error(f'Error: {e}')
+                raise SystemExit
             if is_success and (msg.data == 0 or msg.data == 1):
                 self.status_pac = msg.data
                 break
@@ -173,6 +182,8 @@ class LPAC(Node):
             self.get_logger().info('Received world map')
         else:
             self.get_logger().error('Service call failed')
+            rclpy.shutdown()
+            return
 
         np_map = self.float32_multiarray_to_numpy(sim_map)
         self.cc_parameters.pNumRobots = len(self.namespaces_of_robots)
@@ -257,11 +268,11 @@ class LPAC(Node):
 def main(args=None):
     rclpy.init(args=args)
     lpac_node = LPAC()
-    executor = MultiThreadedExecutor()
-    executor.add_node(lpac_node)
     try:
-        executor.spin()
-    except KeyboardInterrupt:
-        lpac_node.get_logger().info('Keyboard interrupt, shutting down.\n')
-    lpac_node.destroy_node()
-    rclpy.shutdown()
+        rclpy.spin(lpac_node)
+    except Exception as e:
+        lpac_node.destroy_node()
+        rclpy.try_shutdown()
+    finally:
+        lpac_node.destroy_node()
+        rclpy.try_shutdown()
