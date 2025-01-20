@@ -11,6 +11,12 @@ from geometry_msgs.msg import TwistStamped
 from async_pac_gnn_interfaces.srv import WorldMap
 from rcl_interfaces.srv import GetParameters
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.wait_for_message import wait_for_message
+from rclpy.executors import Executor
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import ShutdownException
+from rclpy.executors import SingleThreadedExecutor
 
 from coverage_control import Point2
 from coverage_control import PointVector
@@ -108,16 +114,29 @@ class LPAC(Node):
         self.cc_env = None
 
         self.status_pac = 2
+        self.status_topic = '/pac_gcs/status_pac'
+        while True:
+            try:
+                is_success, msg = wait_for_message(Int32, self, self.status_topic, qos_profile=self.qos_profile)
+            except:
+                return
+            if is_success and (msg.data == 0 or msg.data == 1):
+                self.status_pac = msg.data
+                break
+            self.get_logger().warn(f'Waiting for status_pac to be ready. Current status: {msg.data}', once=True)
+        self.get_logger().info('status_pac is ready')
+
+        # self.loop_rate = self.create_rate(frequency=1, clock=self.get_clock())
+        # while rclpy.ok() and (self.status_pac != 0 and self.status_pac != 1):
+        #     self.get_logger().warn(f'Waiting for status_pac to be ready. Current status: {self.status_pac}', once=True)
+        #     # rclpy.spin_once(self)
+        #     self.loop_rate.sleep()
+
         self.pac_status_subscription = self.create_subscription(
                 Int32,
-                '/pac_gcs/status_pac',
+                self.status_topic,
                 self.pac_status_callback,
                 qos_profile=self.qos_profile)
-
-        while self.status_pac:
-            self.get_logger().warn(f'Waiting for status_pac to be ready. Current status: {self.status_pac}', once=True)
-            rclpy.spin_once(self)
-        self.get_logger().info('status_pac is ready')
 
         # Log status_pac
         self.get_logger().info(f'status_pac: {self.status_pac}')
@@ -238,6 +257,11 @@ class LPAC(Node):
 def main(args=None):
     rclpy.init(args=args)
     lpac_node = LPAC()
-    rclpy.spin(lpac_node)
+    executor = MultiThreadedExecutor()
+    executor.add_node(lpac_node)
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        lpac_node.get_logger().info('Keyboard interrupt, shutting down.\n')
     lpac_node.destroy_node()
     rclpy.shutdown()
