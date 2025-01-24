@@ -10,6 +10,14 @@ from geometry_msgs.msg import PoseArray
 from geometry_msgs.msg import TwistStamped
 from async_pac_gnn_interfaces.srv import WorldMap
 from rcl_interfaces.srv import GetParameters
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.wait_for_message import wait_for_message
+from rclpy.executors import Executor
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import ShutdownException
+from rclpy.executors import ExternalShutdownException
+from rclpy.executors import SingleThreadedExecutor
 
 from coverage_control import Point2
 from coverage_control import PointVector
@@ -64,13 +72,25 @@ class LPAC_Controller:
 class LPAC(Node):
     def __init__(self):
         super().__init__('lpac_coveragecontrol')
-
+        self.qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=5
+        )
         # self.declare_parameter('namespaces_of_robots', rclpy.Parameter.Type.STRING_ARRAY)
         # self.namespaces_of_robots = self.get_parameter('namespaces_of_robots').get_parameter_value().string_array_value
 
         # self.namespaces_of_robots_client = self.create_client(NamespacesRobots, '/sim/namespaces_robots')
         self.sim_parameters_client = self.create_client(GetParameters, 'sim_get_parameters')
-        while not self.sim_parameters_client.wait_for_service(timeout_sec=2.0):
+        while True:
+            try:
+                service_flag = self.sim_parameters_client.wait_for_service(timeout_sec=2.0)
+            except Exception as e:
+                self.get_logger().error(f'Error: {e}')
+                raise SystemExit
+            if service_flag:
+                break
             self.get_logger().info('sim parameters service not available, waiting again...')
 
         if not self.sim_parameters_client.service_is_ready():
@@ -102,15 +122,30 @@ class LPAC(Node):
         self.cc_env = None
 
         self.status_pac = 2
+        self.status_topic = '/pac_gcs/status_pac'
+        while True:
+            try:
+                is_success, msg = wait_for_message(Int32, self, self.status_topic, qos_profile=self.qos_profile)
+            except Exception as e:
+                self.get_logger().error(f'Error: {e}')
+                raise SystemExit
+            if is_success and (msg.data == 0 or msg.data == 1):
+                self.status_pac = msg.data
+                break
+            self.get_logger().warn(f'Waiting for status_pac to be ready. Current status: {msg.data}', once=True)
+        self.get_logger().info('status_pac is ready')
+
+        # self.loop_rate = self.create_rate(frequency=1, clock=self.get_clock())
+        # while rclpy.ok() and (self.status_pac != 0 and self.status_pac != 1):
+        #     self.get_logger().warn(f'Waiting for status_pac to be ready. Current status: {self.status_pac}', once=True)
+        #     # rclpy.spin_once(self)
+        #     self.loop_rate.sleep()
+
         self.pac_status_subscription = self.create_subscription(
                 Int32,
-                '/pac_gcs/status_pac',
+                self.status_topic,
                 self.pac_status_callback,
-                10)
-
-        while self.status_pac:
-            self.get_logger().info(f'Waiting for status_pac to be ready. Current status: {self.status_pac}')
-            rclpy.spin_once(self)
+                qos_profile=self.qos_profile)
 
         # Log status_pac
         self.get_logger().info(f'status_pac: {self.status_pac}')
@@ -122,11 +157,11 @@ class LPAC(Node):
                 PoseArray,
                 'robot_poses',
                 self.poses_callback,
-                10)
+                qos_profile=self.qos_profile)
 
-        while self.robot_poses[0][0] == 0 and self.robot_poses[0][1] == 0:
-            self.get_logger().info('Waiting for robot poses')
-            rclpy.spin_once(self)
+        # while self.robot_poses[0][0] == 0 and self.robot_poses[0][1] == 0:
+        #     self.get_logger().info('Waiting for robot poses')
+        #     rclpy.spin_once(self)
 
         self.get_logger().info('Robot poses received')
 
@@ -147,6 +182,8 @@ class LPAC(Node):
             self.get_logger().info('Received world map')
         else:
             self.get_logger().error('Service call failed')
+            rclpy.shutdown()
+            return
 
         np_map = self.float32_multiarray_to_numpy(sim_map)
         self.cc_parameters.pNumRobots = len(self.namespaces_of_robots)
@@ -171,7 +208,7 @@ class LPAC(Node):
             self.get_logger().error('Robot index not found in the namespace')
             rclpy.shutdown()
 
-        self.publisher_cmd_vel = self.create_publisher(TwistStamped, f'{cmd_vel_topic}', 10)
+        self.publisher_cmd_vel = self.create_publisher(TwistStamped, f'/{self.ns}/{cmd_vel_topic}', self.qos_profile)
 
         timer_period = self.cc_parameters.pTimeStep
         self.lpac_step_timer = self.create_timer(timer_period, self.lpac_step_callback)
@@ -223,7 +260,7 @@ class LPAC(Node):
                 self.cc_env.SetGlobalRobotPosition(i, self.robot_poses[i])
 
     def lpac_step_callback(self):
-        if self.status_pac == 2:
+        if self.status_pac != 0 and self.status_pac != 1:
             return
         if self.cc_env is not None:
             actions = self.controller.step(self.cc_env)
@@ -247,6 +284,11 @@ class LPAC(Node):
 def main(args=None):
     rclpy.init(args=args)
     lpac_node = LPAC()
-    rclpy.spin(lpac_node)
-    lpac_node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(lpac_node)
+    except Exception as e:
+        lpac_node.destroy_node()
+        rclpy.try_shutdown()
+    finally:
+        lpac_node.destroy_node()
+        rclpy.try_shutdown()
