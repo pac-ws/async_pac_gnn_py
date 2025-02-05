@@ -121,7 +121,11 @@ class LPAC(Node):
         future = self.sim_system_info_client.call_async(request)
         rclpy.spin_until_future_complete(self, future)
         if future.result() is not None and future.result().success:
-            sim_map = future.result().map
+            #sim_map = future.result().map
+
+            # Receive an index from the service call
+            # WorldIDF is calculaed based on the map_index
+            idf_file = future.result().idf_file
             self.namespaces_of_robots = future.result().namespaces
             self.vel_scale_factor = future.result().velocity_scale_factor
 
@@ -162,9 +166,14 @@ class LPAC(Node):
         #     rclpy.shutdown()
         #     return
 
-        np_map = self.float32_multiarray_to_numpy(sim_map)
+        #np_map = self.float32_multiarray_to_numpy(sim_map)
         self.cc_parameters.pNumRobots = len(self.namespaces_of_robots)
-        self.world_idf = WorldIDF(self.cc_parameters, np_map)
+        #self.world_idf = WorldIDF(self.cc_parameters, np_map)
+
+        idf_path = '/workspace/' + idf_file
+
+        self.world_idf = WorldIDF(self.cc_parameters, idf_path)
+        self.get_logger().info('Done creating WorldIDF')
         self.cc_env = CoverageSystem(self.cc_parameters, self.world_idf, self.robot_poses)
         # self.world_map = self.cc_env.GetWorldMapMutable()
         # self.world_map[:, :] = np_map
