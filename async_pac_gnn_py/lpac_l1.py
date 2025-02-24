@@ -130,6 +130,7 @@ class LPAC(Node):
             self.vel_scale_factor = future.result().velocity_scale_factor
 
             self.get_logger().info('Received system info')
+            self.get_logger().info(f'Using IDF file: {idf_file}')
         else:
             self.get_logger().error('Service call failed')
             rclpy.shutdown()
