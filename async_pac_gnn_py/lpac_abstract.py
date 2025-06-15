@@ -1,6 +1,4 @@
 import os
-import threading
-from contextlib import contextmanager
 from abc import ABC, abstractmethod
 import rclpy
 from rclpy.node import Node
@@ -16,7 +14,6 @@ class LPACAbstract(Node, ABC):
     def __init__(self, node_name: str, is_solo: bool = False):
         super().__init__(node_name)
 
-        # self._cc_thread_lock = threading.RLock()
         self._ns = self.get_namespace()
         self._ns = self._ns[1:] if self._ns.startswith('/') else self._ns  # Remove leading '/'
         self._ns_index = None
@@ -44,10 +41,6 @@ class LPACAbstract(Node, ABC):
         self._cc_parameters.pNumRobots = self._num_robots
         self._robot_poses = None
 
-        # with self._cc_thread_lock:
-        #     self._idf_path = '/workspace/' + idf_file
-        #     self._cc_env = None
-
         self._idf_path = '/workspace/' + idf_file
         self._cc_env = None
 
@@ -62,28 +55,11 @@ class LPACAbstract(Node, ABC):
                 self._update_world_file_callback
                 )
 
-    @contextmanager
-    def _try_acquire_lock(self, lock: threading.Lock):
-        """Context manager to safely acquire a lock."""
-        acquired = lock.acquire(blocking=False)
-        try:
-            yield acquired
-        finally:
-            if acquired:
-                lock.release()
 
     def _create_cc_env(self, idf_path: str, robot_poses: coverage_control.PointVector):
         if not os.path.isfile(idf_path):
             return False
         try:
-            # with self._cc_thread_lock:
-            #     self._cc_env = None
-            #     self._idf_path = idf_path
-            #     self._world_idf = coverage_control.WorldIDF(self._cc_parameters, self._idf_path)
-            #     self._cc_env = coverage_control.CoverageSystem(
-            #             self._cc_parameters,
-            #             self._world_idf,
-            #             robot_poses)
             self._cc_env = None
             self._idf_path = idf_path
             self._world_idf = coverage_control.WorldIDF(self._cc_parameters, self._idf_path)
@@ -233,10 +209,12 @@ class LPACAbstract(Node, ABC):
                 else:
                     self.get_logger().warn('Waiting for status_pac message...')
 
+            except rclpy.exceptions.ROSInterruptException:
+                self.get_logger().info('Node shutdown requested during PAC status wait')
+                raise
             except Exception as e:
-                self.get_logger().warn(f'Error waiting for PAC status: {e}')
-                raise e
-
+                self.get_logger().error(f'Error waiting for PAC status: {e}')
+                raise
 
     def _initialize_pac_status_subscriber(self):
         self._pac_status_subscription = self.create_subscription(
@@ -251,17 +229,13 @@ class LPACAbstract(Node, ABC):
             self.get_logger().warn('sim get_system_info service not available, waiting again...')
 
         request = SystemInfo.Request()
-        request.map_size = self._cc_parameters.pWorldMapSize
+        request.name = self._ns
         try:
             future = sim_system_info_client.call_async(request)
             rclpy.spin_until_future_complete(self, future)
             result = future.result()
             if result is None:
                 self.get_logger().error('Service call returned None')
-                return None, None, None
-
-            if not result.success:
-                self.get_logger().error('Service call failed')
                 return None, None, None
 
             self.get_logger().info(

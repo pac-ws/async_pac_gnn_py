@@ -28,7 +28,7 @@ def launch_setup(context, *args, **kwargs):
         package='async_pac_gnn_py',
         executable='lpac',
         namespace=f'{ns}',
-        name='lpac_node',
+        name='lpac',
         parameters=[{
             'params_file': params_file,
             'learning_params_file': learning_params_file,
