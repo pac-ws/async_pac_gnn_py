@@ -36,6 +36,9 @@ class LPAC(LPACAbstract):
         else:
             raise RuntimeError('Coverage control environment is None')
         
+        # Pre-allocate reusable message object to avoid repeated creation
+        self._twist_msg = TwistStamped()
+        
         self.get_logger().info(f'LPAC node initialized for robot {self._ns} {self._ns_index}/{self._num_robots}')
 
     def _initialize_poses_subscription(self):
@@ -76,14 +79,14 @@ class LPAC(LPACAbstract):
             actions = self.controller.step(self._cc_env)
             self_action = actions[self._ns_index]
 
-        twist_msg = TwistStamped()
+        # Reuse pre-allocated message object
         t = self.get_clock().now()
-        twist_msg.header.stamp = t.to_msg()
-        twist_msg.header.frame_id = self._ns
-        twist_msg.twist.linear.x = float(self_action[0] * self._vel_scale)
-        twist_msg.twist.linear.y = float(self_action[1] * self._vel_scale)
+        self._twist_msg.header.stamp = t.to_msg()
+        self._twist_msg.header.frame_id = self._ns
+        self._twist_msg.twist.linear.x = float(self_action[0] * self._vel_scale)
+        self._twist_msg.twist.linear.y = float(self_action[1] * self._vel_scale)
 
-        self._cmd_vel_publishers[0].publish(twist_msg)
+        self._cmd_vel_publishers[0].publish(self._twist_msg)
 
     def float32_multiarray_to_numpy(self, msg: Float32MultiArray) -> np.ndarray:
         rows = msg.layout.dim[0].size

@@ -35,6 +35,9 @@ class LPAC(LPACAbstract):
         else:
             raise RuntimeError('Coverage control environment is None')
         
+        # Pre-allocate reusable message object to avoid repeated creation
+        self._twist_msg = TwistStamped()
+        
         self.get_logger().info(f'LPAC node initialized')
 
     def _initialize_poses_subscription(self):
@@ -76,15 +79,15 @@ class LPAC(LPACAbstract):
         if self._status_pac == 0 and self._cc_env is not None:
             actions = self.controller.step(self._cc_env)
 
-        twist_msg = TwistStamped()
+        # Reuse pre-allocated message object
         t = self.get_clock().now()
-        twist_msg.header.stamp = t.to_msg()
+        self._twist_msg.header.stamp = t.to_msg()
         for i in range(self._num_robots):
-            twist_msg.header.frame_id = self._ns_robots[i]
-            twist_msg.twist.linear.x = float(actions[i][0] * self._vel_scale)
-            twist_msg.twist.linear.y = float(actions[i][1] * self._vel_scale)
+            self._twist_msg.header.frame_id = self._ns_robots[i]
+            self._twist_msg.twist.linear.x = float(actions[i][0] * self._vel_scale)
+            self._twist_msg.twist.linear.y = float(actions[i][1] * self._vel_scale)
 
-            self._cmd_vel_publishers[i].publish(twist_msg)
+            self._cmd_vel_publishers[i].publish(self._twist_msg)
 
     def destroy_node(self):
         """Clean shutdown of the node."""
