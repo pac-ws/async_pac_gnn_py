@@ -5,8 +5,8 @@ import numpy as np
 import rclpy
 from rclpy.wait_for_message import wait_for_message
 from std_msgs.msg import Float32MultiArray
-from geometry_msgs.msg import PoseArray
 from geometry_msgs.msg import TwistStamped
+from async_pac_gnn_interfaces.msg import RobotPositions
 
 import coverage_control
 
@@ -42,20 +42,22 @@ class LPAC(LPACAbstract):
 
     def _initialize_poses_subscription(self):
         self._poses_subscription = self.create_subscription(
-                PoseArray,
+                RobotPositions,
                 self._robot_poses_topic,
                 self._poses_callback,
                 qos_profile=self._qos_profile)
 
 
-    def _robot_poses_from_msg(self, msg: PoseArray) -> coverage_control.PointVector:
-        return coverage_control.PointVector(
-            [[pose.position.x, pose.position.y] for pose in msg.poses]
-        )
+    def _robot_poses_from_msg(self, msg: RobotPositions) -> coverage_control.PointVector:
+        # Convert flattened positions array to list of [x, y] pairs
+        positions = []
+        for i in range(0, len(msg.positions), 2):
+            positions.append([msg.positions[i], msg.positions[i + 1]])
+        return coverage_control.PointVector(positions)
     def _wait_for_robot_poses(self):
         while True:
             ok, msg = wait_for_message(
-                PoseArray,
+                RobotPositions,
                 self,
                 self._robot_poses_topic,
                 qos_profile=self._qos_profile,

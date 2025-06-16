@@ -77,7 +77,7 @@ def generate_launch_description():
     
     remap_robot_poses_arg = DeclareLaunchArgument(
         'remap_robot_poses',
-        default_value='/sim/all_robot_sim_poses',
+        default_value='/sim/all_robot_positions',
         description='Remapping target for robot_poses topic'
     )
     
