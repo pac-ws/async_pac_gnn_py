@@ -24,6 +24,7 @@ setup(
         'console_scripts': [
             'lpac = async_pac_gnn_py.lpac:main',
             'lpac_l1 = async_pac_gnn_py.lpac_l1:main',
+            'lpac_l2 = async_pac_gnn_py.lpac_l2:main',
             'fake_robot = async_pac_gnn_py.fake_robot:main'
         ],
     },
