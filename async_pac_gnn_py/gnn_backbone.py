@@ -1,20 +1,27 @@
 import torch
 from coverage_control import Parameters
+from coverage_control import IOUtils
 from coverage_control.nn.models.gnn_backbone import GNNBackBone
 
 
 class LPACGNNBackbone:
 
-    def __init__(self, config: dict, params: Parameters):
+    def __init__(self, config: dict, params: Parameters, state_dicts: dict):
         self.config = config
         self.params = params
         
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")  # Force CPU for small computations
         
-        self.model = GNNBackBone(self.config).to(self.device)
+        self.learning_params_file = IOUtils.sanitize_path(
+                self.config["LearningParams"]
+                )
+        self.learning_params = IOUtils.load_toml(self.learning_params_file)["GNNBackBone"]
+        self.model = GNNBackBone(self.learning_params).to(self.device)
+
+        self.model.load_state_dict(state_dicts["gnn_backbone"], strict=True)
         self.model.eval()
 
-    def step(self, node_features: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(self, node_features: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         """
         Forward pass for distributed GNN processing
         
@@ -31,5 +38,4 @@ class LPACGNNBackbone:
         with torch.no_grad():
             output = self.model(node_features, edge_index, edge_weight=None)
         
-        # Return features for the first node (this robot)
-        return output[0:1]  # Shape: [1, feature_dim]
+        return output[0:1]

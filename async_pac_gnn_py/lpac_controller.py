@@ -15,7 +15,7 @@ class LPACController:
         self.use_comm_map = self.config["UseCommMap"]
         self.cnn_map_size = self.config["CNNMapSize"]
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")  # Force CPU for small computations
         # print(f"Using device: {self.device}")
 
         if "ModelFile" in self.config:
@@ -44,5 +44,3 @@ class LPACController:
             actions = actions * self.actions_std + self.actions_mean
         point_vector_actions = PointVector(actions.cpu().numpy())
         return point_vector_actions
-
-

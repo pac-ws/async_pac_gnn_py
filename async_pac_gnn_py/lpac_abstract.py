@@ -29,7 +29,7 @@ class LPACAbstract(Node, ABC):
         self._block_until_pac_status_ready()
         self._initialize_pac_status_subscriber()
 
-        idf_file, self._ns_robots, self._vel_scale = self._get_system_info()
+        idf_file, self._ns_robots, self._vel_scale, self._env_scale = self._get_system_info()
         if self._ns_robots is None:
             raise RuntimeError('System info retrieval failed')
 
@@ -243,7 +243,7 @@ class LPACAbstract(Node, ABC):
                     f'IDF: {result.idf_file}, vel_scale: {result.velocity_scale_factor}'
                     )
 
-            return result.idf_file, result.namespaces, result.velocity_scale_factor
+            return result.idf_file, result.namespaces, result.velocity_scale_factor, result.env_scale_factor
 
         except Exception as e:
             self.get_logger().error(f'Service call exception: {e}')
