@@ -55,7 +55,6 @@ class LPACAbstract(Node, ABC):
                 self._update_world_file_callback
                 )
 
-
     def _create_cc_env(self, idf_path: str, robot_poses: coverage_control.PointVector):
         if not os.path.isfile(idf_path):
             return False

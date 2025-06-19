@@ -27,18 +27,16 @@ class LPAC(LPACAbstract):
         if not self._create_cc_env(self._idf_path, self._robot_poses):
             raise RuntimeError('Coverage control environment creation failed')
 
-        timer_period = self._cc_parameters.pTimeStep
-        self.lpac_step_timer = self.create_timer(timer_period, self._lpac_step_callback)
-
         if self._cc_env is not None:
             self.controller = LPACController(
                     self._controller_params, self._cc_parameters)
         else:
             raise RuntimeError('Coverage control environment is None')
-        
-        # Pre-allocate reusable message object to avoid repeated creation
+
         self._twist_msg = TwistStamped()
-        
+        timer_period = self._cc_parameters.pTimeStep
+        self.lpac_step_timer = self.create_timer(timer_period, self._lpac_step_callback)
+
         self.get_logger().info(f'LPAC node initialized for robot {self._ns} {self._ns_index}/{self._num_robots}')
 
     def _initialize_poses_subscription(self):
@@ -58,18 +56,18 @@ class LPAC(LPACAbstract):
     def _wait_for_robot_poses(self):
         while True:
             ok, msg = wait_for_message(
-                RobotPositions,
-                self,
-                self._robot_poses_topic,
-                qos_profile=self._qos_profile,
-                time_to_wait=5.0)
+                    RobotPositions,
+                    self,
+                    self._robot_poses_topic,
+                    qos_profile=self._qos_profile,
+                    time_to_wait=5.0)
             if ok:
                 self._robot_poses = self._robot_poses_from_msg(msg)
                 break
             self.get_logger().warn('Waiting for robot poses...', once=True)
 
     def _poses_callback(self, msg):
-            self._robot_poses = self._robot_poses_from_msg(msg)
+        self._robot_poses = self._robot_poses_from_msg(msg)
             if self._cc_env is not None and self._status_pac == 0:
                 self._cc_env.SetGlobalRobotPositions(self._robot_poses)
 

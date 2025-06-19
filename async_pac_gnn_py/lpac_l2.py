@@ -62,7 +62,6 @@ class LPAC_L2(LPACAbstract):
         self._twist_msg = TwistStamped()
         self.latest_cnn_output = None
 
-
         self.get_logger().info(f'LPAC_L2 node initialized for robot {self._ns} {self._ns_index}/{self._num_robots}')
 
     def _initialize_pose_subscription(self):
