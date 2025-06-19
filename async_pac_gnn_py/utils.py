@@ -70,30 +70,25 @@ def load_and_split_state_dict(model_path: str) -> dict:
     # Initialize component state dicts
     cnn_backbone_dict = OrderedDict()
     gnn_backbone_dict = OrderedDict()
-    output_linear_dict = OrderedDict()
-    actions_dict = OrderedDict()
+    action_dict = OrderedDict()
 
     # Split the state dict by component prefixes
     for key, value in lpac_state_dict.items():
         if key.startswith("cnn_backbone."):
-            # Remove the "cnn_backbone." prefix
             new_key = key[len("cnn_backbone."):]
             cnn_backbone_dict[new_key] = value
         elif key.startswith("gnn_backbone."):
-            # Remove the "gnn_backbone." prefix
             new_key = key[len("gnn_backbone."):]
             gnn_backbone_dict[new_key] = value
+        elif key.startswith("gnn_mlp."):
+            action_dict[key] = value
         elif key.startswith("output_linear."):
-            # Remove the "output_linear." prefix
-            new_key = key[len("output_linear."):]
-            output_linear_dict[new_key] = value
+            action_dict[key] = value
         elif key in ["actions_mean", "actions_std"]:
-            # Keep actions keys as-is
-            actions_dict[key] = value
+            action_dict[key] = value
 
     return {
             "cnn_backbone": cnn_backbone_dict,
             "gnn_backbone": gnn_backbone_dict,
-            "output_linear": output_linear_dict,
-            "actions": actions_dict
+            "action": action_dict
             }

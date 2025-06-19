@@ -68,8 +68,8 @@ class LPAC(LPACAbstract):
 
     def _poses_callback(self, msg):
         self._robot_poses = self._robot_poses_from_msg(msg)
-            if self._cc_env is not None and self._status_pac == 0:
-                self._cc_env.SetGlobalRobotPositions(self._robot_poses)
+        if self._cc_env is not None and self._status_pac == 0:
+            self._cc_env.SetGlobalRobotPositions(self._robot_poses)
 
     def _lpac_step_callback(self):
         if self._status_pac not in [0, 1]:

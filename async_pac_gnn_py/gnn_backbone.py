@@ -6,19 +6,15 @@ from coverage_control.nn.models.gnn_backbone import GNNBackBone
 
 class LPACGNNBackbone:
 
-    def __init__(self, config: dict, params: Parameters, state_dicts: dict):
-        self.config = config
-        self.params = params
-        
+    def __init__(self, learning_params: dict, state_dicts: dict):
         self.device = torch.device("cpu")  # Force CPU for small computations
         
-        self.learning_params_file = IOUtils.sanitize_path(
-                self.config["LearningParams"]
-                )
-        self.learning_params = IOUtils.load_toml(self.learning_params_file)["GNNBackBone"]
-        self.model = GNNBackBone(self.learning_params).to(self.device)
+        self.lparams = learning_params
+        
+        self.latent_size = self.lparams["LatentSize"]
 
-        self.model.load_state_dict(state_dicts["gnn_backbone"], strict=True)
+        self.model = GNNBackBone(self.lparams).to(self.device)
+        self.model.load_state_dict(state_dicts, strict=True)
         self.model.eval()
 
     def forward(self, node_features: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
@@ -32,8 +28,6 @@ class LPACGNNBackbone:
         Returns:
             torch.Tensor: Processed features for this robot
         """
-        node_features = node_features.to(self.device)
-        edge_index = edge_index.to(self.device)
         
         with torch.no_grad():
             output = self.model(node_features, edge_index, edge_weight=None)

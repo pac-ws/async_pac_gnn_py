@@ -81,10 +81,10 @@ class MessageManager:
 
     def _cnn_features_callback(self, msg: Features, robot_ns: str):
         """Store latest CNN features message for each robot if timestamp is recent"""
-        if self.last_position_update_time is not None:
-            msg_time = rclpy.time.Time.from_msg(msg.header.stamp)
-            if msg_time < self.last_position_update_time:
-                return
+        # if self.last_position_update_time is not None:
+        #     msg_time = rclpy.time.Time.from_msg(msg.header.stamp)
+        #     if msg_time < self.last_position_update_time:
+        #         return
 
         self.cnn_features_by_ns[robot_ns] = msg
 
@@ -96,21 +96,16 @@ class MessageManager:
 
         num_robots = len(self.cnn_features_by_ns) + 1  # +1 for self
 
-        all_robot_positions = torch.zeros((num_robots, 2), dtype=torch.float32)
-        all_robot_positions[0] = self.sim_pos_tensor
-
         feature_dim = self.own_cnn_features.shape[0]
-        all_cnn_features = torch.zeros((num_robots, feature_dim), dtype=torch.float32)
+        self.all_cnn_features = torch.zeros((num_robots, feature_dim), dtype=torch.float32)
 
-        all_cnn_features[0] = self.own_cnn_features
+        self.all_cnn_features[0] = self.own_cnn_features
 
         for i, (robot_ns, features_msg) in enumerate(self.cnn_features_by_ns.items(), 1):
-            all_cnn_features[i] = utils.features_to_tensor(features_msg)
-            all_robot_positions[i] = all_cnn_features[i][-1:] * self.world_map_size - self.half_world_map_size
+            self.all_cnn_features[i] = utils.features_to_tensor(features_msg)
+        all_robot_positions = self.all_cnn_features[:,-2:] * self.world_map_size - self.half_world_map_size
 
-        self.all_cnn_features = all_cnn_features
-
-        adjacency_matrix = torch.cdist(all_robot_positions, all_robot_positions, 2) < self.comm_range  # Create adjacency based on comm_range
+        adjacency_matrix = torch.cdist(all_robot_positions, all_robot_positions, 2) < self.comm_range
         adjacency_matrix.fill_diagonal_(0)  # Remove self-loops
 
         self.edge_index = adjacency_matrix.to_sparse().coalesce().indices().long()
