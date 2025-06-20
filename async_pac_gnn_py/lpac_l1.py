@@ -24,7 +24,7 @@ class LPAC(LPACAbstract):
         self._wait_for_robot_poses()
         self._initialize_poses_subscription()
 
-        if not self._create_cc_env(self._idf_path, self._robot_poses):
+        if not self._create_cc_env(self._idf_path, self._sim_poses):
             raise RuntimeError('Coverage control environment creation failed')
 
         if self._cc_env is not None:
@@ -62,14 +62,14 @@ class LPAC(LPACAbstract):
                     qos_profile=self._qos_profile,
                     time_to_wait=5.0)
             if ok:
-                self._robot_poses = self._robot_poses_from_msg(msg)
+                self._sim_poses = self._robot_poses_from_msg(msg)
                 break
             self.get_logger().warn('Waiting for robot poses...', once=True)
 
     def _poses_callback(self, msg):
-        self._robot_poses = self._robot_poses_from_msg(msg)
+        self._sim_poses = self._robot_poses_from_msg(msg)
         if self._cc_env is not None and self._status_pac == 0:
-            self._cc_env.SetGlobalRobotPositions(self._robot_poses)
+            self._cc_env.SetGlobalRobotPositions(self._sim_poses)
 
     def _lpac_step_callback(self):
         if self._status_pac not in [0, 1]:

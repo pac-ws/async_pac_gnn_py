@@ -8,15 +8,23 @@ from geometry_msgs.msg import TwistStamped
 
 from async_pac_gnn_interfaces.srv import SystemInfo
 from async_pac_gnn_interfaces.srv import UpdateWorldFile
+from async_pac_gnn_interfaces.srv import NamespacesRobots
 import coverage_control
 
 class LPACAbstract(Node, ABC):
     def __init__(self, node_name: str, is_solo: bool = False):
         super().__init__(node_name)
 
+        self.is_solo = is_solo
         self._ns = self.get_namespace()
         self._ns = self._ns[1:] if self._ns.startswith('/') else self._ns  # Remove leading '/'
         self._ns_index = None
+        self._ns_robots = None
+
+        self._num_robots = 1 # Will get update in Initialize
+
+        self._cmd_vel_topic = 'cmd_vel'
+        self._cmd_vel_publishers = []
 
         self._qos_profile = self._initialize_qos_profile()
 
@@ -26,26 +34,72 @@ class LPACAbstract(Node, ABC):
         self._status_pac = 2
         self._status_topic = '/pac_gcs/status_pac'
         self._pac_status_subscription = None
-        self._block_until_pac_status_ready()
-        self._initialize_pac_status_subscriber()
 
-        idf_file, self._ns_robots, self._vel_scale, self._env_scale = self._get_system_info()
-        if self._ns_robots is None:
+        self._vel_scale = 1.0
+        self._env_scale = 1.0
+        self._idf_path = None
+        self._idf_file = None
+
+        self._sim_poses = None
+        self._cc_env = None
+        self._controller_params = None
+        self._update_world_file_srv = None
+
+        self._pac_status_initialized = False
+        self._sim_system_info_client = self.create_client(SystemInfo, 'get_system_info')
+        self._system_info_done = False
+        self._system_info_waiting = False
+        self._base_initialized = False
+        
+        self._namespaces_client = self.create_client(NamespacesRobots, '/sim/get_namespaces_robots')
+        self._namespaces_done = False
+        self._namespaces_waiting = False
+
+    def InitializeBase(self):
+        if not self._pac_status_initialized:
+            self._initialize_pac_status_subscriber()
+            self._pac_status_initialized = True
+        if self._status_pac != 0:
+            return
+
+        if not self._system_info_done:
+            if self._system_info_waiting:
+                return
+            if not self._sim_system_info_client.wait_for_service(timeout_sec=2.0):
+                self.get_logger().warn('sim get_system_info service not available, waiting again...')
+                return
+            request = SystemInfo.Request()
+            request.name = self._ns
+            future = self._sim_system_info_client.call_async(request)
+            future.add_done_callback(self._system_info_callback)
+            self._system_info_waiting = True
+            return
+
+        if not self._namespaces_done:
+            if self._namespaces_waiting:
+                return
+            if not self._namespaces_client.wait_for_service(timeout_sec=2.0):
+                self.get_logger().warn('get_namespaces_robots service not available, waiting again...')
+                return
+            request = NamespacesRobots.Request()
+            future = self._namespaces_client.call_async(request)
+            future.add_done_callback(self._namespaces_callback)
+            self._namespaces_waiting = True
+            return
+
+        if self._idf_file is None:
             raise RuntimeError('System info retrieval failed')
+        if self._ns_robots is None:
+            raise RuntimeError('Robot namespaces retrieval failed')
+        
+        self.get_logger().info(f'System info and namespaces received')
 
-        if is_solo:
-            self._num_robots = 1
-        else:
+        if not self.is_solo:
             self._num_robots = len(self._ns_robots)
 
         self._cc_parameters.pNumRobots = self._num_robots
-        self._robot_poses = None
 
-        self._idf_path = '/workspace/' + idf_file
-        self._cc_env = None
-
-        self._cmd_vel_topic = 'cmd_vel'
-        self._cmd_vel_publishers = []
+        self._idf_path = '/workspace/' + self._idf_file
 
         self._controller_params = self._get_controller_params()
 
@@ -54,6 +108,7 @@ class LPACAbstract(Node, ABC):
                 'update_world_file',
                 self._update_world_file_callback
                 )
+        self._base_initialized = True
 
     def _create_cc_env(self, idf_path: str, robot_poses: coverage_control.PointVector):
         if not os.path.isfile(idf_path):
@@ -84,11 +139,11 @@ class LPACAbstract(Node, ABC):
             response.message = f'[{self._ns}] world file does not exist: {idf_path}'
             return response
         self._idf_path = idf_path
-        if self._cc_env is None or self._robot_poses is None:
+        if self._cc_env is None or self._sim_poses is None:
             response.success = False
             response.message = f'[{self._ns}] Uninitialized system'
             return response
-        if not self._create_cc_env(idf_path, self._robot_poses):
+        if not self._create_cc_env(idf_path, self._sim_poses):
             self.get_logger().error('Failed to create CoverageSystem with new world file')
             response.success = False
             response.message = f'[{self._ns}] Update failed: {idf_path}'
@@ -189,31 +244,47 @@ class LPACAbstract(Node, ABC):
 
         self.get_logger().info(f'Using parameters file: {self.params_file}')
 
-    def _block_until_pac_status_ready(self):
-        while True:
-            try:
-                is_success, msg = wait_for_message(
-                        Int32, self, self._status_topic,
-                        qos_profile=self._qos_profile,
-                        time_to_wait=5.0)
-                if is_success == True and msg.data in [0, 1]:
-                    self._status_pac = msg.data
-                    self.get_logger().info(f'PAC status ready: {self._status_pac}')
-                    return
-                elif is_success == True:
-                    self.get_logger().warn(
-                            f'Waiting for status_pac to be ready. Current status: {msg.data}', 
-                            once=True
-                            )
-                else:
-                    self.get_logger().warn('Waiting for status_pac message...')
+    def _system_info_callback(self, future):
+        """Callback for async system info service call."""
+        try:
+            result = future.result()
+            if result is None:
+                self.get_logger().error('System info service call returned None')
+                self._system_info_waiting = False
+                return
+            
+            self._idf_file = result.idf_file
+            self._vel_scale = result.velocity_scale_factor
+            self._env_scale = result.env_scale_factor
+            self._system_info_done = True
+            self._system_info_waiting = False
+            
+            self.get_logger().info(
+                f'System info received: IDF: {result.idf_file}, vel_scale: {result.velocity_scale_factor}'
+            )
+            
+        except Exception as e:
+            self.get_logger().error(f'System info service call exception: {e}')
+            self._system_info_waiting = False
 
-            except rclpy.exceptions.ROSInterruptException:
-                self.get_logger().info('Node shutdown requested during PAC status wait')
-                raise
-            except Exception as e:
-                self.get_logger().error(f'Error waiting for PAC status: {e}')
-                raise
+    def _namespaces_callback(self, future):
+        """Callback for async namespaces service call."""
+        try:
+            result = future.result()
+            if result is None:
+                self.get_logger().error('Namespaces service call returned None')
+                self._namespaces_waiting = False
+                return
+            
+            self._ns_robots = result.namespaces
+            self._namespaces_done = True
+            self._namespaces_waiting = False
+            
+            self.get_logger().info(f'Robot namespaces received: {len(result.namespaces)} robots')
+            
+        except Exception as e:
+            self.get_logger().error(f'Namespaces service call exception: {e}')
+            self._namespaces_waiting = False
 
     def _initialize_pac_status_subscriber(self):
         self._pac_status_subscription = self.create_subscription(
@@ -221,16 +292,16 @@ class LPACAbstract(Node, ABC):
                 self._status_topic,
                 lambda msg: setattr(self, '_status_pac', msg.data),
                 qos_profile=self._qos_profile)
+        self._pac_status_initialized = True
 
     def _get_system_info(self):
-        sim_system_info_client = self.create_client(SystemInfo, 'get_system_info')
-        while not sim_system_info_client.wait_for_service(timeout_sec=2.0):
+        while not self._sim_system_info_client.wait_for_service(timeout_sec=2.0):
             self.get_logger().warn('sim get_system_info service not available, waiting again...')
 
         request = SystemInfo.Request()
         request.name = self._ns
         try:
-            future = sim_system_info_client.call_async(request)
+            future = self._sim_system_info_client.call_async(request)
             rclpy.spin_until_future_complete(self, future)
             result = future.result()
             if result is None:
@@ -238,11 +309,10 @@ class LPACAbstract(Node, ABC):
                 return None, None, None
 
             self.get_logger().info(
-                    f'System info received: {len(result.namespaces)} robots, '
-                    f'IDF: {result.idf_file}, vel_scale: {result.velocity_scale_factor}'
+                    f'System info received: IDF: {result.idf_file}, vel_scale: {result.velocity_scale_factor}'
                     )
 
-            return result.idf_file, result.namespaces, result.velocity_scale_factor, result.env_scale_factor
+            return result.idf_file, result.velocity_scale_factor, result.env_scale_factor
 
         except Exception as e:
             self.get_logger().error(f'Service call exception: {e}')

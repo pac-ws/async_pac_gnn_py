@@ -81,6 +81,9 @@ class MessageManager:
 
     def _cnn_features_callback(self, msg: Features, robot_ns: str):
         """Store latest CNN features message for each robot if timestamp is recent"""
+        # TODO: This causes an error because I am comparing inconsistent times
+        # Not really an issue but it was good to have
+
         # if self.last_position_update_time is not None:
         #     msg_time = rclpy.time.Time.from_msg(msg.header.stamp)
         #     if msg_time < self.last_position_update_time:
@@ -96,6 +99,7 @@ class MessageManager:
 
         num_robots = len(self.cnn_features_by_ns) + 1  # +1 for self
 
+        # TODO: feature_dim is constant. Can we get it during initialization?
         feature_dim = self.own_cnn_features.shape[0]
         self.all_cnn_features = torch.zeros((num_robots, feature_dim), dtype=torch.float32)
 
@@ -131,16 +135,6 @@ class MessageManager:
             raise ValueError("Must call process_cnn_features first")
         return self.relative_neighbors, self.sim_pos_tensor
 
-    def get_own_position(self):
-        """
-        Get cached own position
-
-        Returns:
-            torch.Tensor: Own position [x, y]
-        """
-        # sim_pos_tensor is always available after initialization
-        return self.sim_pos_tensor
-
     def publish_cnn_features(self, cnn_output: torch.Tensor, sim_pos: coverage_control.Point2, frame_id: str = "map"):
         """
         Publish CNN output tensor concatenated with normalized sim position
@@ -170,31 +164,3 @@ class MessageManager:
 
         # Publish the message
         self.cnn_features_pub.publish(msg)
-
-    def get_all_cnn_features(self):
-        """
-        Get all CNN features from other robots
-
-        Returns:
-            dict: Dictionary of {robot_namespace: Features message} for all robots
-        """
-        return self.cnn_features_by_ns
-
-    @staticmethod
-    def create_manager(comm_range: float, ns: str, ns_index: int, world_map_size: int,
-                       node=None, robot_namespaces=None):
-        """
-        Static factory method to create MessageManager instance
-
-        Args:
-            comm_range: Communication range for filtering neighbors
-            ns: Namespace of this robot
-            ns_index: Index of this robot in the pose array
-            world_map_size: Size of the world map for position normalization
-            node: ROS2 node for creating subscriptions (optional)
-            robot_namespaces: List of robot namespaces for CNN feature subscriptions (optional)
-
-        Returns:
-            MessageManager: Configured manager instance
-        """
-        return MessageManager(comm_range, ns, ns_index, world_map_size, node, robot_namespaces)

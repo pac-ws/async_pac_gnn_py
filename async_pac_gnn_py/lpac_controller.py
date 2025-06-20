@@ -47,7 +47,6 @@ class LPACController:
         return point_vector_actions
 
 class LPACActionNN(torch.nn.Module):
-
     def __init__(self, config: dict):
         super().__init__()
 
@@ -75,9 +74,7 @@ class LPACActionNN(torch.nn.Module):
     
 
 class LPACAction:
-
     def __init__(self, lparams: dict, state_dicts: dict):
-        
         self.device = torch.device("cpu")  # Force CPU for small computations
         self.lparams = lparams
 

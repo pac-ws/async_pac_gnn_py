@@ -25,62 +25,92 @@ class LPAC_L2(LPACAbstract):
     def __init__(self):
         super().__init__('lpac_l2_distributed', is_solo=True)
 
-        self._get_namespace_index()
         self._create_cmd_vel_publishers(is_solo=True)
 
-        self.sim_pos = None
+        self._sim_poses = coverage_control.PointVector([[0.0, 0.0]])
         self.world_xy = None
-
-        self._robot_pose_topic = 'pose'
-        self._wait_for_robot_pose()
-        self._initialize_pose_subscription()
-
-        initial_position = coverage_control.PointVector([self.sim_pos])
-        if not self._create_cc_env(self._idf_path, initial_position):
-            raise RuntimeError('Coverage control environment creation failed')
-        self.sim_pos = self._cc_env.GetRobotPosition(0)
-
-        lparams = IOUtils.load_toml(IOUtils.sanitize_path(self._controller_params["LearningParams"]))
-        model_state_dicts = utils.load_and_split_state_dict(self._controller_params["ModelStateDict"])
-
-        self.cnn_backbone = LPACCNNBackbone(
-                self._controller_params,
-                self._cc_parameters,
-                model_state_dicts["cnn_backbone"]
-                )
-        self.gnn_backbone = LPACGNNBackbone(
-                lparams["GNNBackBone"],
-                model_state_dicts["gnn_backbone"]
-                )
-
-        # DANGER: Why are these hardcoded in coverage_control.nn.models.lpac???
-        action_config = {"InputDim": self.gnn_backbone.latent_size,
-                         "MLP": { "HiddenUnits": 32, "OutDim": 32 },
-                         "OutDim": 2}
-        self.lpac_action = LPACAction(
-                action_config,
-                model_state_dicts["action"]
-                )
-
-        self.message_manager = MessageManager(
-                comm_range=self._cc_parameters.pCommunicationRange,
-                ns=self._ns,
-                ns_index=self._ns_index,
-                world_map_size=self._cc_parameters.pWorldMapSize,
-                node=self,
-                qos_profile=self._qos_profile,
-                robot_namespaces=self._ns_robots
-                )
 
         self.cnn_output = None
         self._twist_msg = TwistStamped()
 
-        timer_period = self._cc_parameters.pTimeStep
-        self.cnn_timer = self.create_timer(timer_period, self._cnn_processing_callback)
-        self.gnn_timer = self.create_timer(timer_period, self._gnn_processing_callback)
-        self.position_timer = self.create_timer(timer_period, self._position_update_callback)
+        self._robot_pose_topic = 'pose'
 
-        self.get_logger().info(f'LPAC_L2 node initialized for robot {self._ns} {self._ns_index}/{self._num_robots}')
+        self.cnn_backbone = None
+        self.gnn_backbone = None
+        self.lpac_action = None
+
+        self.cnn_timer = None
+        self.gnn_timer = None
+        self.position_timer = None
+
+        self.message_manager = None
+
+        self.timer_period = self._cc_parameters.pTimeStep
+
+        self.initialize_timer = self.create_timer(1, self.initialize_cb)
+        self.state = 0
+
+    def initialize_cb(self):
+        if self.state == 0:
+            self.InitializeBase()
+            self.state = 1
+        elif self._base_initialized == False:
+            self.InitializeBase()
+            return
+        elif self.state == 1:
+            self._get_namespace_index()
+            # self._wait_for_robot_pose()
+            self._initialize_pose_subscription()
+            self.state = 2
+        elif self.state == 2:
+            if self.world_xy is None:
+                return
+            else:
+                self.state = 3
+        elif self.state == 3:
+
+            self.initialize_timer.cancel()
+            if not self._create_cc_env(self._idf_path, self._sim_poses):
+                raise RuntimeError('Coverage control environment creation failed')
+            self._sim_poses[0] = self._cc_env.GetRobotPosition(0)
+
+            lparams = IOUtils.load_toml(IOUtils.sanitize_path(self._controller_params["LearningParams"]))
+            model_state_dicts = utils.load_and_split_state_dict(self._controller_params["ModelStateDict"])
+
+            self.cnn_backbone = LPACCNNBackbone(
+                    self._controller_params,
+                    self._cc_parameters,
+                    model_state_dicts["cnn_backbone"]
+                    )
+            self.gnn_backbone = LPACGNNBackbone(
+                    lparams["GNNBackBone"],
+                    model_state_dicts["gnn_backbone"]
+                    )
+
+            # TODO DANGER: Why are these hardcoded in coverage_control.nn.models.lpac???
+            action_config = {"InputDim": self.gnn_backbone.latent_size,
+                             "MLP": { "HiddenUnits": 32, "OutDim": 32 },
+                             "OutDim": 2}
+            self.lpac_action = LPACAction(
+                    action_config,
+                    model_state_dicts["action"]
+                    )
+
+            self.message_manager = MessageManager(
+                    comm_range=self._cc_parameters.pCommunicationRange,
+                    ns=self._ns,
+                    ns_index=self._ns_index,
+                    world_map_size=self._cc_parameters.pWorldMapSize,
+                    node=self,
+                    qos_profile=self._qos_profile,
+                    robot_namespaces=self._ns_robots
+                    )
+
+            self.cnn_timer = self.create_timer(self.timer_period, self._cnn_processing_callback)
+            self.gnn_timer = self.create_timer(self.timer_period, self._gnn_processing_callback)
+            self.position_timer = self.create_timer(self.timer_period, self._position_update_callback)
+
+            self.get_logger().info(f'LPAC_L2 node initialized for robot {self._ns} {self._ns_index}/{self._num_robots}')
 
     def _initialize_pose_subscription(self):
         self.pose_subscription = self.create_subscription(
@@ -107,7 +137,7 @@ class LPAC_L2(LPACAbstract):
                     time_to_wait=5.0)
             if ok:
                 self._pose_callback(msg)
-                self.sim_pos = self.world_xy * self._env_scale
+                self._sim_poses[0] = self.world_xy * self._env_scale
                 break
             self.get_logger().warn('Waiting for robot poses...', once=True)
 
@@ -116,7 +146,7 @@ class LPAC_L2(LPACAbstract):
         if self._status_pac == 0:
             scaled_pos = self.world_xy * self._env_scale
             self._cc_env.SetGlobalRobotPosition(0, scaled_pos)
-            self.sim_pos = self._cc_env.GetRobotPosition(0)
+            self._sim_poses[0] = self._cc_env.GetRobotPosition(0)
 
     def _cnn_processing_callback(self):
         """CNN processing timer callback"""
@@ -127,7 +157,7 @@ class LPAC_L2(LPACAbstract):
 
         self.cnn_output = self.cnn_backbone.forward(self._cc_env, relative_neighbors)
 
-        self.message_manager.publish_cnn_features(self.cnn_output, self.sim_pos)
+        self.message_manager.publish_cnn_features(self.cnn_output, self._sim_poses[0])
 
         self.message_manager.process_cnn_features()
 
@@ -173,17 +203,19 @@ def main(args=None):
     rclpy.init(args=args)
     lpac_node = LPAC_L2()
     executor = rclpy.executors.SingleThreadedExecutor()
-    try:
-        executor.add_node(lpac_node)
-        executor.spin()
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        lpac_node.get_logger().error(f'Exception occurred in spinning: {e}')
-    finally:
-        lpac_node.get_logger().info('Shutting down LPAC_L2 node')
-        executor.remove_node(lpac_node)
-        executor.shutdown()
-        lpac_node.destroy_node()
-        if rclpy.ok():
-            rclpy.try_shutdown()
+    executor.add_node(lpac_node)
+    executor.spin()
+    # try:
+    #     executor.add_node(lpac_node)
+    #     executor.spin()
+    # except KeyboardInterrupt:
+    #     pass
+    # except Exception as e:
+    #     lpac_node.get_logger().error(f'Exception occurred in spinning: {e}')
+    # finally:
+    #     lpac_node.get_logger().info('Shutting down LPAC_L2 node')
+    #     executor.remove_node(lpac_node)
+    #     executor.shutdown()
+    #     lpac_node.destroy_node()
+    #     if rclpy.ok():
+    #         rclpy.try_shutdown()
