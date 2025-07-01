@@ -66,7 +66,7 @@ def generate_launch_description():
     
     params_file_arg = DeclareLaunchArgument(
         'params_file',
-        default_value='/workspace/pt/models_256/coverage_control_params.toml',
+        default_value='/workspace/pt/models_256/coverage_control_params_512.toml',
         description='Path to parameters file'
     )
     
